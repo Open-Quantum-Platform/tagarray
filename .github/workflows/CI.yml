@@ -3,40 +3,86 @@ name: CI
 on:
   push:
   pull_request:
-    branches: [ "master" ]
 
 jobs:
-  GCC-build:
-    runs-on: ${{ matrix.image }}
-
+  # Build + test the C / C++ / Fortran libraries and the examples on Linux & macOS.
+  # Building the examples in-tree exercises the tagarray:: alias targets, i.e. the
+  # FetchContent consumption path.
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        image: [ 'ubuntu-20.04' ]
-        GCC: [ '9', '11' ]
-        BUILD_TYPE: [ 'Release' ]
         include:
-          - image: 'ubuntu-latest'
-            GCC: '12'
-            BUILD_TYPE: 'Debug'
-
+          - { name: linux-gcc-11, os: ubuntu-latest, cc: gcc-11, cxx: g++-11, fc: gfortran-11, build_type: Release }
+          - { name: linux-gcc-13, os: ubuntu-latest, cc: gcc-13, cxx: g++-13, fc: gfortran-13, build_type: Debug }
+          - { name: macos-gcc,    os: macos-latest,  cc: gcc-14, cxx: g++-14, fc: gfortran-14, build_type: Release }
     steps:
-    - uses: actions/checkout@v4
-    - uses: lukka/get-cmake@latest
-      with:
-        cmakeVersion: "~3.25.0"
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
 
-    - name: Install GCC
-      run: sudo apt update && sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test && sudo apt install g++-${{ matrix.GCC }} gfortran-${{ matrix.GCC }} gcc-${{ matrix.GCC }}
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.cc }} ${{ matrix.cxx }} ${{ matrix.fc }} ninja-build
 
-    - name: Configure CMake
-      run: cmake -G"Ninja" -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{ matrix.BUILD_TYPE }} -DENABLE_FORTRAN=ON -DENABLE_TESTING=ON -DCMAKE_C_COMPILER=gcc-${{ matrix.GCC }} -DCMAKE_CXX_COMPILER=g++-${{ matrix.GCC }} -DCMAKE_Fortran_COMPILER=gfortran-${{ matrix.GCC }} -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/install
+      - name: Install toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gcc ninja || true
 
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      - name: Configure
+        run: >
+          cmake -G Ninja -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DENABLE_FORTRAN=ON -DENABLE_TESTING=ON -DENABLE_EXAMPLES=ON
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_Fortran_COMPILER=${{ matrix.fc }}
 
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      run: ctest . --output-on-failure
+      - name: Build
+        run: cmake --build build
 
-    - name: Install
-      run: cmake --build ${{github.workspace}}/build --target install
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # Prove an external project can consume an *installed* tagarray via
+  # find_package (this would have caught the previously-missing Config.cmake).
+  downstream-consume:
+    name: downstream find_package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc g++ gfortran ninja-build
+
+      - name: Build & install tagarray
+        run: |
+          cmake -G Ninja -B build -DENABLE_FORTRAN=ON -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+          cmake --build build
+          cmake --install build
+
+      - name: Consume via find_package
+        run: |
+          cmake -G Ninja -B cbuild -S tests/consume -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build cbuild
+          ctest --test-dir cbuild --output-on-failure
+
+  # Build the wheel and run the Python suite the way an end user would.
+  python:
+    name: python pip install + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build
+      - name: pip install
+        run: python -m pip install .
+      - name: Run example + pytest
+        run: |
+          python -m pip install pytest numpy
+          python examples/python/quickstart.py
+          python -m pytest tests/Python -q
