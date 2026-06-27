@@ -9,6 +9,7 @@ option(ENABLE_FORTRAN    "Enable Fortran bindings"        OFF)
 option(ENABLE_PYTHON     "Enable Python bindings (requires BUILD_SHARED_LIBS=ON)" OFF)
 option(BUILD_SHARED_LIBS "Build as shared library"        OFF)
 option(ENABLE_TESTING    "Enable tests"                   OFF)
+option(ENABLE_EXAMPLES   "Build the examples"             OFF)
 option(ENABLE_LTO        "Enable Link-Time Optimizations" OFF)
 
 
@@ -224,4 +225,8 @@ install(FILES
 if(ENABLE_TESTING)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(ENABLE_EXAMPLES)
+  add_subdirectory(examples)
 endif()
