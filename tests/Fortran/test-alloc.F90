@@ -73,9 +73,13 @@ contains
     p = reshape((/ 10._c_double, 20._c_double, 30._c_double, 40._c_double /), (/ 2, 2 /))
     ! re-fetch the record independently and confirm the bytes are there
     rec = c%get("mat")
+    if (.not.rec%is_associated()) then; status = 4; return; end if
     call c_f_pointer(rec%data, q, rec%dims)
     if (any(abs(q - p) > 0)) then; status = 2; return; end if
     if (abs(q(2,2) - 40._c_double) > 0) then; status = 3; return; end if
+    ! a missing record must report not-associated
+    rec = c%get("absent")
+    if (rec%is_associated()) then; status = 5; return; end if
     call c%delete()
     status = 0
   end function check_alloc_zero_copy
@@ -109,6 +113,8 @@ contains
     status = c%alloc("x", (/ 3 /), p, override=.false.)
     if (status /= TA_CONTAINER_RECORD_EXISTS) then; status = 4; return; end if
     if (associated(p)) then; status = 5; return; end if
+    ! the status message must be complete (regression: "+" vs "+=")
+    if (index(get_status_message(status, "x"), "exists") == 0) then; status = 6; return; end if
     call c%delete()
     status = 0
   end function check_alloc_override

@@ -28,14 +28,14 @@ std::string get_status_message(const int32_t status,
     if (!tag.empty()) {
       message += "`" + tag + "` ";
     }
-    message + "not found!";
+    message += "not found!";
     break;
   case defines::CONTAINER_RECORD_EXISTS:
     message = "Record ";
     if (!tag.empty()) {
       message += "`" + tag + "` ";
     }
-    message + "already exists!";
+    message += "already exists!";
     break;
   case defines::DATA_ZERO_LENGTH:
     if (!tag.empty()) {

@@ -35,7 +35,7 @@ contains
     this%description = from_Cstring(recordinfo%description)
   end subroutine recordinfo_assign
   logical function is_associated(this) result(lstat)
-    class(RecordInfo_t),   intent(out) :: this
+    class(RecordInfo_t),   intent(in) :: this
     lstat = c_associated(this%data)
   end function is_associated
   integer(c_int32_t) function get_status(this, ext_type_id, ext_ndim) result(status)
