@@ -1,0 +1,30 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "tagarray"
+version = "1.0.0"
+description = "Share the same array data across C, C++, Fortran and Python"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+dependencies = ["numpy"]
+
+[project.urls]
+Homepage = "https://github.com/Open-Quantum-Platform/tagarray"
+Source = "https://github.com/Open-Quantum-Platform/tagarray"
+
+[tool.scikit-build]
+# Drive the project's own CMake build, enabling only the Python bindings.
+cmake.version = ">=3.25"
+wheel.packages = ["python/tagarray"]
+# Only the Python component lands in the wheel (the core is statically linked
+# into the extension), so the wheel is just the `tagarray` package.
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+ENABLE_PYTHON = "ON"
+ENABLE_FORTRAN = "OFF"
+ENABLE_TESTING = "OFF"
+ENABLE_EXAMPLES = "OFF"

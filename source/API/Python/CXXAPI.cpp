@@ -67,6 +67,12 @@ const std::unordered_map<std::string, int32_t> from_pyformat_string_map{
      defines::TYPE_CMPLX32},
     {py::format_descriptor<std::complex<double>>::format(),
      defines::TYPE_CMPLX64},
+    // numpy/the buffer protocol report int64/uint64 as the native 'l'/'L'
+    // (long) on LP64 platforms, whereas pybind11's int64_t descriptor
+    // normalizes to 'q'/'Q' (long long). Add the literal long codes, sized so
+    // they map to INT32/UINT32 on LLP64 (e.g. Windows, where long is 4 bytes).
+    {"l", sizeof(long) == 8 ? defines::TYPE_INT64 : defines::TYPE_INT32},
+    {"L", sizeof(long) == 8 ? defines::TYPE_UINT64 : defines::TYPE_UINT32},
     {py::format_descriptor<char>::format(), defines::TYPE_CHAR8}};
 
 int32_t get_type_from_pyformat(std::string pyformat) {
@@ -112,7 +118,9 @@ std::optional<py::object> get_numpy_array(const PyRecordInfo &pyrec) {
 } // namespace py_utils
 } // namespace tagarray
 
-PYBIND11_MODULE(tagarray, m) {
+// Compiled as the private extension `tagarray._tagarray`; the pure-Python
+// package `tagarray` (python/tagarray/__init__.py) re-exports from it.
+PYBIND11_MODULE(_tagarray, m) {
 
   auto m_types = m.def_submodule("types");
   m_types.attr("unknown") = defines::TYPE_UNKNOWN;

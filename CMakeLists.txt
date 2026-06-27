@@ -18,9 +18,11 @@ if(ENABLE_FORTRAN)
 endif()
 
 if(ENABLE_PYTHON)
-  if(NOT ${BUILD_SHARED_LIBS})
-    message(FATAL_ERROR "ENABLE_PYTHON ON requires BUILD_SHARED_LIBS ON because only shared libraries can be dynamically loaded")
-  endif()
+  # The pybind11 extension links the core library statically (made position-
+  # independent below), so the resulting module is self-contained and needs no
+  # separate libtagarray at import time. (A shared core also works, but then the
+  # dylib must be co-located/rpath'd into the wheel.)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
   find_package(pybind11 REQUIRED)
 endif()
@@ -182,16 +184,22 @@ if(ENABLE_PYTHON)
   target_compile_features(${PN}_py PRIVATE cxx_std_17)
   target_link_libraries(${PN}_py PRIVATE ${PN})
   target_compile_check_add_flags(${PN}_py PRIVATE CXX ${${CMAKE_CXX_COMPILER_ID}_CXX_WARNINGS})
-  set_target_properties(${PN}_py PROPERTIES OUTPUT_NAME ${PN})
+  # Built as the private extension `_tagarray`; the pure-Python package
+  # `tagarray` (python/tagarray) re-exports from it.
+  set_target_properties(${PN}_py PROPERTIES OUTPUT_NAME _${PN})
   if(IPO_AVAILABLE)
     set_target_properties(${PN}_py PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
   endif()
   # NOTE: the Python extension is intentionally NOT part of ${PN}Targets — a
   # C/C++/Fortran find_package(tagarray) consumer must not be forced to resolve
   # pybind11/Python. Proper Python packaging is handled via pyproject.toml.
+  # Install into the package directory (COMPONENT python) so scikit-build-core
+  # lands it next to __init__.py inside the wheel's `tagarray/` package and the
+  # wheel contains ONLY the Python component (no C/C++ headers or cmake config).
   install(TARGETS ${PN}_py
-          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+          COMPONENT python
+          LIBRARY DESTINATION ${PN}
+          RUNTIME DESTINATION ${PN}
   )
 endif()
 
