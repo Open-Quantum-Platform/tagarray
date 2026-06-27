@@ -4,6 +4,7 @@ list(APPEND SOURCES_Fortran
   ${dir}/CAPI.f90
   ${dir}/container.f90
   ${dir}/Crecordinfo.f90
+  ${dir}/highlevel.f90
   ${dir}/recordinfo.f90
   ${dir}/tagarray.f90
   ${dir}/utils.F90

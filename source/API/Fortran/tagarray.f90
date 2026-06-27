@@ -4,6 +4,7 @@ module tagarray
   use tagarray_utils
   use tagarray_recordinfo
   use tagarray_container
+  use tagarray_highlevel
   implicit none
   public
 end module tagarray

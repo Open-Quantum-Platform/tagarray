@@ -1,5 +1,5 @@
 module tagarray_container
-  use, intrinsic :: iso_c_binding, only: c_int32_t, c_ptr, c_f_pointer, c_null_ptr, c_associated
+  use, intrinsic :: iso_c_binding, only: c_int32_t, c_int64_t, c_float, c_double, c_double_complex, c_ptr, c_f_pointer, c_null_ptr, c_associated
   use tagarray_defines
   use tagarray_CAPI
   use tagarray_utils
@@ -24,6 +24,31 @@ module tagarray_container
     procedure, public  :: clear => container_t_clear
     procedure, public  :: load => container_t_load
     procedure, public  :: save => container_t_save
+    ! High-level "allocate a container-owned array and bind a typed pointer to
+    ! it" convenience (added in v1.0.0). One call replaces create + get +
+    ! get_status + c_f_pointer; the TA_TYPE_* id is inferred from the pointer.
+    procedure, private :: alloc_r64_1, alloc_r64_2, alloc_r64_3
+    procedure, private :: alloc_r32_1, alloc_r32_2, alloc_r32_3
+    procedure, private :: alloc_i32_1, alloc_i32_2, alloc_i32_3
+    procedure, private :: alloc_i64_1, alloc_i64_2, alloc_i64_3
+    procedure, private :: alloc_c64_1, alloc_c64_2, alloc_c64_3
+    generic,   public  :: alloc => &
+        alloc_r64_1, alloc_r64_2, alloc_r64_3, &
+        alloc_r32_1, alloc_r32_2, alloc_r32_3, &
+        alloc_i32_1, alloc_i32_2, alloc_i32_3, &
+        alloc_i64_1, alloc_i64_2, alloc_i64_3, &
+        alloc_c64_1, alloc_c64_2, alloc_c64_3
+    procedure, private :: alloc_die_r64_1, alloc_die_r64_2, alloc_die_r64_3
+    procedure, private :: alloc_die_r32_1, alloc_die_r32_2, alloc_die_r32_3
+    procedure, private :: alloc_die_i32_1, alloc_die_i32_2, alloc_die_i32_3
+    procedure, private :: alloc_die_i64_1, alloc_die_i64_2, alloc_die_i64_3
+    procedure, private :: alloc_die_c64_1, alloc_die_c64_2, alloc_die_c64_3
+    generic,   public  :: alloc_or_die => &
+        alloc_die_r64_1, alloc_die_r64_2, alloc_die_r64_3, &
+        alloc_die_r32_1, alloc_die_r32_2, alloc_die_r32_3, &
+        alloc_die_i32_1, alloc_die_i32_2, alloc_die_i32_3, &
+        alloc_die_i64_1, alloc_die_i64_2, alloc_die_i64_3, &
+        alloc_die_c64_1, alloc_die_c64_2, alloc_die_c64_3
   end type
 contains
   subroutine container_t_new(this, description)
@@ -144,4 +169,420 @@ contains
     class(container_t),             intent(inout) :: this
     call TA_container_clear(this%container_ptr)
   end subroutine container_t_clear
+
+  ! ===================================================================
+  ! High-level allocate-and-bind convenience (v1.0.0)
+  !
+  ! `status = c%alloc(tag, shape, ptr [, description] [, override])`
+  ! creates a container-owned record AND binds the caller's typed Fortran
+  ! pointer to its (zero-copy) storage in a single call. The TA_TYPE_* id is
+  ! taken from the pointer's kind, and `shape` is given as plain default
+  ! integers. By default an existing record under `tag` is replaced
+  ! (override defaults to .true.); pass override=.false. for create-only
+  ! semantics (then a duplicate tag returns TA_CONTAINER_RECORD_EXISTS).
+  ! On any failure the pointer is returned null() and the TA_* status is
+  ! returned. `c%alloc_or_die(...)` is the fail-fast variant that aborts
+  ! with a formatted message instead of returning a status.
+  ! ===================================================================
+  subroutine container_t_alloc_record(this, tag, type_id, dshape, description, override, rec, status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer(c_int32_t),                       intent(in)    :: type_id
+    integer(c_int64_t),                       intent(in)    :: dshape(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t),                       intent(out)   :: rec
+    integer(c_int32_t),                       intent(out)   :: status
+    logical :: ov
+    ov = .true.
+    if (present(override)) ov = override
+    status = this%create(tag, type_id, dshape, description=description, override=ov)
+    if (status /= TA_OK) return
+    rec = this%get(tag)
+    status = rec%get_status(type_id, int(size(dshape), c_int64_t))
+  end subroutine container_t_alloc_record
+
+  subroutine container_t_alloc_abort(status, tag)
+    use, intrinsic :: iso_fortran_env, only: error_unit
+    integer(c_int32_t),             intent(in) :: status
+    character(kind=TA_CHAR, len=*), intent(in) :: tag
+    write(error_unit, '(A)') "tagarray: alloc('"//trim(tag)//"') failed -- "// &
+                             get_status_message(status, tag)
+    error stop
+  end subroutine container_t_alloc_abort
+
+  integer(c_int32_t) function alloc_r64_1(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r64_1
+
+  integer(c_int32_t) function alloc_r64_2(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r64_2
+
+  integer(c_int32_t) function alloc_r64_3(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r64_3
+
+  integer(c_int32_t) function alloc_r32_1(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r32_1
+
+  integer(c_int32_t) function alloc_r32_2(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r32_2
+
+  integer(c_int32_t) function alloc_r32_3(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_REAL32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_r32_3
+
+  integer(c_int32_t) function alloc_i32_1(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i32_1
+
+  integer(c_int32_t) function alloc_i32_2(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i32_2
+
+  integer(c_int32_t) function alloc_i32_3(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT32, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i32_3
+
+  integer(c_int32_t) function alloc_i64_1(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i64_1
+
+  integer(c_int32_t) function alloc_i64_2(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i64_2
+
+  integer(c_int32_t) function alloc_i64_3(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_INT64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_i64_3
+
+  integer(c_int32_t) function alloc_c64_1(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_CMPLX64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_c64_1
+
+  integer(c_int32_t) function alloc_c64_2(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_CMPLX64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_c64_2
+
+  integer(c_int32_t) function alloc_c64_3(this, tag, dshape, ptr, description, override) result(status)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    type(recordinfo_t) :: rec
+    ptr => null()
+    call container_t_alloc_record(this, tag, TA_TYPE_CMPLX64, int(dshape, c_int64_t), description, override, rec, status)
+    if (status == TA_OK) call c_f_pointer(rec%data, ptr, rec%dims)
+  end function alloc_c64_3
+
+  subroutine alloc_die_r64_1(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r64_1
+
+  subroutine alloc_die_r64_2(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r64_2
+
+  subroutine alloc_die_r64_3(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_double),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r64_3
+
+  subroutine alloc_die_r32_1(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r32_1
+
+  subroutine alloc_die_r32_2(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r32_2
+
+  subroutine alloc_die_r32_3(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    real(c_float),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_r32_3
+
+  subroutine alloc_die_i32_1(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i32_1
+
+  subroutine alloc_die_i32_2(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i32_2
+
+  subroutine alloc_die_i32_3(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int32_t),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i32_3
+
+  subroutine alloc_die_i64_1(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i64_1
+
+  subroutine alloc_die_i64_2(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i64_2
+
+  subroutine alloc_die_i64_3(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    integer(c_int64_t),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_i64_3
+
+  subroutine alloc_die_c64_1(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_c64_1
+
+  subroutine alloc_die_c64_2(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_c64_2
+
+  subroutine alloc_die_c64_3(this, tag, dshape, ptr, description, override)
+    class(container_t),                       intent(inout) :: this
+    character(kind=TA_CHAR, len=*),           intent(in)    :: tag
+    integer,                                  intent(in)    :: dshape(:)
+    complex(c_double_complex),                  pointer, intent(out)   :: ptr(:,:,:)
+    character(kind=TA_CHAR, len=*), optional, intent(in)    :: description
+    logical,                        optional, intent(in)    :: override
+    integer(c_int32_t) :: status
+    status = this%alloc(tag, dshape, ptr, description=description, override=override)
+    if (status /= TA_OK) call container_t_alloc_abort(status, tag)
+  end subroutine alloc_die_c64_3
 end module tagarray_container
