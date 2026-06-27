@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+# tagarray package configuration.
+#
+# Provides the imported targets:
+#   tagarray::tagarray     - C / C++ core library
+#   tagarray::tagarray_f   - Fortran bindings (only if tagarray was built with
+#                            ENABLE_FORTRAN=ON)
+#
+# The Python extension is deliberately not exported here; install it with pip
+# (see the project's pyproject.toml) instead.
+
+include("${CMAKE_CURRENT_LIST_DIR}/tagarrayTargets.cmake")
+
+check_required_components(tagarray)

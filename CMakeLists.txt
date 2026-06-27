@@ -76,6 +76,9 @@ add_subdirectory(source)
 
 
 add_library(${PN} ${SOURCES})
+# In-tree namespaced alias so FetchContent consumers link the same target name
+# (tagarray::tagarray) that find_package() consumers get from the export below.
+add_library(${PN}::${PN} ALIAS ${PN})
 add_dependencies(${PN} ${PN}_C_defines)
 add_dependencies(${PN} ${PN}_CXX_defines)
 target_sources(${PN}
@@ -85,8 +88,11 @@ target_sources(${PN}
                                                                    include/${PN}/RecordInfo.h
                                                                    include/${PN}/PyRecordInfo.hpp
                                                                    include/${PN}/Container.hpp
+                                                                   include/${PN}/Utils.hpp
+                                                                   include/${PN}/filesystem.hpp
                                                                    include/${PN}/hidden/Record.hpp
     FILE_SET HEADERS BASE_DIRS ${CMAKE_BINARY_DIR}/include   FILES ${CMAKE_BINARY_DIR}/include/${PN}/defines.h
+                                                                   ${CMAKE_BINARY_DIR}/include/${PN}/defines.hpp
 )
 target_include_directories(${PN} PRIVATE "${CMAKE_SOURCE_DIR}/include" "${CMAKE_BINARY_DIR}/include")
 target_compile_features(${PN} PUBLIC cxx_std_17)
@@ -108,6 +114,12 @@ install(TARGETS ${PN}
 
 if(ENABLE_FORTRAN)
   add_library(${PN}_f ${SOURCES_Fortran} "${CMAKE_BINARY_DIR}/defines.f90")
+  add_library(${PN}::${PN}_f ALIAS ${PN}_f)
+  # Export the Fortran module (.mod) directory so downstream `use tagarray`
+  # resolves, for both the build tree (FetchContent) and the install tree.
+  target_include_directories(${PN}_f INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include/${PN}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PN}>)
   target_compile_features(${PN}_f PRIVATE cxx_std_17)
   add_dependencies(${PN}_f ${PN}_Fortran_defines)
   target_link_libraries(${PN}_f ${PN})
@@ -155,13 +167,12 @@ if(ENABLE_FORTRAN)
           INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
           FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   )
-  install(FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray.mod
-          FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray_defines.mod
-          FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray_capi.mod
-          FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray_utils.mod
-          FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray_container.mod
-          FILES ${CMAKE_BINARY_DIR}/include/${PN}/tagarray_recordinfo.mod
-          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PN})
+  # Install every generated Fortran .mod from the module directory. This is
+  # robust to compiler-dependent module names/casing and to new modules
+  # (e.g. tagarray_highlevel) without having to enumerate them by hand.
+  install(DIRECTORY ${CMAKE_BINARY_DIR}/include/${PN}/
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PN}
+          FILES_MATCHING PATTERN "*.mod")
 endif()
 
 
@@ -174,13 +185,12 @@ if(ENABLE_PYTHON)
   if(IPO_AVAILABLE)
     set_target_properties(${PN}_py PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
   endif()
+  # NOTE: the Python extension is intentionally NOT part of ${PN}Targets — a
+  # C/C++/Fortran find_package(tagarray) consumer must not be forced to resolve
+  # pybind11/Python. Proper Python packaging is handled via pyproject.toml.
   install(TARGETS ${PN}_py
-          EXPORT ${PN}Targets
           LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-          INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-          FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   )
 endif()
 
@@ -190,12 +200,25 @@ install(EXPORT ${PN}Targets
     NAMESPACE ${PN}::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PN})
 
+# Generate the package config file so that find_package(tagarray CONFIG) works.
+# (Previously only Targets + ConfigVersion were installed, with no Config file,
+#  which made find_package(tagarray) fail for every downstream consumer.)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/${PN}Config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/${PN}Config.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PN})
+
+# SameMajorVersion: a firm 1.0.0 must not be silently satisfied by a future
+# ABI-breaking 2.x.
 write_basic_package_version_file(
     "${PN}ConfigVersion.cmake"
     VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion)
+    COMPATIBILITY SameMajorVersion)
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PN}ConfigVersion.cmake" DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PN})
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/${PN}Config.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/${PN}ConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PN})
 
 
 if(ENABLE_TESTING)
