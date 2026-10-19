@@ -9,3 +9,9 @@ target_link_libraries(test-api-cpp ${PROJECT_NAME})
 target_include_directories(test-api-cpp PRIVATE "${CMAKE_BINARY_DIR}/include/tagarray")
 add_test(NAME C++API::api
          COMMAND test-api-cpp)
+
+add_executable(test-count64-cpp test-count64.cpp)
+target_link_libraries(test-count64-cpp ${PROJECT_NAME})
+target_include_directories(test-count64-cpp PRIVATE "${CMAKE_BINARY_DIR}/include/tagarray")
+add_test(NAME C++API::count64
+         COMMAND test-count64-cpp)

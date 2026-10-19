@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -25,15 +26,31 @@ private:
   std::string description_;
 
 public:
+  // Element count of a record with extents `dims`, evaluated in int64_t.
+  // Returns -1 for a negative extent, or when the element count or the byte
+  // count (count * itemsize) does not fit in int64_t.
+  inline static int64_t checked_count(const std::vector<int64_t> &dims,
+                                      const int32_t itemsize) noexcept {
+    int64_t count = 1;
+    for (const auto extent : dims) {
+      if (extent < 0)
+        return -1;
+      if (extent != 0 && count > std::numeric_limits<int64_t>::max() / extent)
+        return -1;
+      count *= extent;
+    }
+    if (itemsize > 0 && count > std::numeric_limits<int64_t>::max() / itemsize)
+      return -1;
+    return count;
+  }
+
   Record(const int32_t type_id, std::vector<int64_t> dimensions,
          const uint8_t *const data = nullptr,
          const std::string &description = std::string(""))
       : type_id_(type_id), itemsize_(utils::get_storage_size(type_id)),
         ndims_(dimensions.size()), dims_(dimensions),
         description_(description) {
-    this->count_ =
-        std::accumulate(std::begin(this->dims_), std::end(this->dims_), 1,
-                        std::multiplies<int64_t>());
+    this->count_ = checked_count(this->dims_, this->itemsize_);
     assert(this->byte_count() != 0);
     if (this->byte_count() <= 0)
       return;
@@ -88,8 +105,7 @@ public:
   }
 
   inline void shape(const std::vector<int64_t> &shape) noexcept {
-    assert(this->count_ == std::accumulate(std::begin(shape), std::end(shape),
-                                           1, std::multiplies<int64_t>()));
+    assert(this->count_ == checked_count(shape, this->itemsize_));
     this->ndims_ = shape.size();
     this->dims_ = shape;
   }
@@ -102,8 +118,11 @@ public:
                         const uint8_t *const data = nullptr) noexcept {
     assert(this->ndims_ == 1);
     assert(shape.size() == 1);
-    int64_t shift = std::accumulate(std::begin(shape), std::end(shape), 1,
-                                    std::multiplies<int64_t>());
+    int64_t shift = checked_count(shape, this->itemsize_);
+    if (shift < 0 ||
+        shift > std::numeric_limits<int64_t>::max() / this->itemsize_ -
+                    this->count_)
+      return defines::DATA_INCORRECT_DIMENSIONS;
     int64_t new_count = shift + this->count_;
     if (new_count == this->count_)
       return defines::NOT_IMPLEMENTED;

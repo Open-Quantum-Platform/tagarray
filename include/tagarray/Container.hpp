@@ -43,8 +43,13 @@ public:
       return res;
     if (this->contains(tag))
       return defines::CONTAINER_RECORD_EXISTS;
-    this->records_.insert(std::make_pair(
-        tag, new hidden::Record(type_id, dimensions, data, description)));
+    auto record = std::make_shared<hidden::Record>(type_id, dimensions, data,
+                                                   description);
+    if (record->count() < 0)
+      return defines::DATA_INCORRECT_DIMENSIONS;
+    if (record->byte_count() > 0 && record->raw_data<uint8_t *>() == nullptr)
+      return defines::MEMORY_ALLOCATION_ERROR;
+    this->records_.insert(std::make_pair(tag, record));
     return defines::OK;
   }
 
